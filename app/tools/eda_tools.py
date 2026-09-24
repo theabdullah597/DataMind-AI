@@ -1,4 +1,6 @@
 import pandas as pd
+from pandas import value_counts
+
 
 def analyze_numerical_columns(df:pd.DataFrame)->dict:
     numerical_columns=(df.select_dtypes(include=["number"]).columns.tolist())
@@ -60,3 +62,43 @@ def analyze_categorical_columns(df: pd.DataFrame) -> dict:
         }
 
     return results
+
+def analyze_target_column(df:pd.DataFrame,target_column:str)->dict:
+    if target_column not in df.columns:
+        raise ValueError(
+            f"Target column {target_column} is not present in the dataset"
+        )
+    series=df[target_column].dropna()
+    unique_values=series.nunique()
+    if (series.dtype=='object' or str(series.dtype)=="category" or unique_values>=10):
+        problem_type="classification"
+        value_counts=series.value_counts()
+        distribution={
+            str(category):int(count)
+            for category,count in value_counts.items()
+        }
+        percentages={
+            str(category):round((count/len(series))*100,2)
+                                for category,count in value_counts.items()
+        }
+        return {
+            "target_column":target_column,
+            "problem_type":problem_type,
+            "unique_values":int(unique_values),
+            "distribution":distribution,
+            "Percentages":percentages,
+
+        }
+    else:
+        problem_type="regression"
+        return {
+            "target_column":target_column,
+            "problem_type":problem_type,
+            "unique_values":int(unique_values),
+            "mean":round(float(series.mean()),2),
+            "median":round(float(series.median()),2),
+            "min":round(float(series.min()),2),
+            "max":round(float(series.min()),2),
+            "std":round(float(series.std()),2),
+
+        }

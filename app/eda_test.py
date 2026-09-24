@@ -2,6 +2,7 @@ import pandas as pd
 
 from tools.eda_tools import analyze_numerical_columns
 from tools.eda_tools import analyze_categorical_columns
+from tools.eda_tools import analyze_target_column
 
 df = pd.read_csv("tools/data.csv")
 
@@ -11,3 +12,10 @@ print("Numerical Columns\n")
 print(numerical_results)
 print("\nCategorical Analysis:")
 print(categorical_results)
+target_results = analyze_target_column(
+    df,
+    "SalePrice"
+)
+
+print("\nTarget Analysis:")
+print(target_results)
