@@ -70,7 +70,7 @@ def analyze_target_column(df:pd.DataFrame,target_column:str)->dict:
         )
     series=df[target_column].dropna()
     unique_values=series.nunique()
-    if (series.dtype=='object' or str(series.dtype)=="category" or unique_values>=10):
+    if (series.dtype=='object' or str(series.dtype)=="category" or unique_values<=10):
         problem_type="classification"
         value_counts=series.value_counts()
         distribution={
