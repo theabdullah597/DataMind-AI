@@ -102,3 +102,101 @@ def analyze_target_column(df:pd.DataFrame,target_column:str)->dict:
             "std":round(float(series.std()),2),
 
         }
+
+def analyze_correlations(df: pd.DataFrame) -> dict:
+    """
+    Analyze correlations between numerical columns.
+    """
+
+    numerical_columns = (
+        df.select_dtypes(include=["number"])
+        .columns
+        .tolist()
+    )
+
+    if len(numerical_columns) < 2:
+        return {
+            "correlation_matrix": {},
+            "strong_correlations": []
+        }
+
+    correlation_matrix = (
+        df[numerical_columns]
+        .corr()
+        .round(2)
+    )
+
+    strong_correlations = []
+
+    for i in range(len(numerical_columns)):
+
+        for j in range(i + 1, len(numerical_columns)):
+
+            column_1 = numerical_columns[i]
+            column_2 = numerical_columns[j]
+
+            correlation = correlation_matrix.loc[
+                column_1,
+                column_2
+            ]
+
+            if abs(correlation) >= 0.7:
+
+                strong_correlations.append({
+                    "column_1": column_1,
+                    "column_2": column_2,
+                    "correlation": float(correlation)
+                })
+
+    return {
+        "correlation_matrix": correlation_matrix.to_dict(),
+        "strong_correlations": strong_correlations
+    }
+
+def detect_outliers(df: pd.DataFrame) -> dict:
+    """
+    Detect outliers in numerical columns using the IQR method.
+    """
+
+    numerical_columns = (
+        df.select_dtypes(include=["number"])
+        .columns
+        .tolist()
+    )
+
+    results = {}
+
+    for column in numerical_columns:
+
+        series = df[column].dropna()
+
+        if series.empty:
+            continue
+
+        q1 = series.quantile(0.25)
+        q3 = series.quantile(0.75)
+
+        iqr = q3 - q1
+
+        lower_bound = q1 - (1.5 * iqr)
+        upper_bound = q3 + (1.5 * iqr)
+
+        outliers = series[
+            (series < lower_bound) |
+            (series > upper_bound)
+        ]
+
+        results[column] = {
+            "q1": round(float(q1), 2),
+            "q3": round(float(q3), 2),
+            "iqr": round(float(iqr), 2),
+            "lower_bound": round(float(lower_bound), 2),
+            "upper_bound": round(float(upper_bound), 2),
+            "outlier_count": int(len(outliers)),
+            "outlier_percentage": round(
+                (len(outliers) / len(series)) * 100,
+                2
+            )
+        }
+
+    return results
