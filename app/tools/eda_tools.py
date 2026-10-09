@@ -200,3 +200,140 @@ def detect_outliers(df: pd.DataFrame) -> dict:
         }
 
     return results
+
+def generate_eda_insights(
+    numerical_results: dict,
+    categorical_results: dict,
+    target_results: dict,
+    correlation_results: dict,
+    outlier_results: dict
+) -> list:
+    """
+    Generate automatic insights from EDA results.
+    """
+
+    insights = []
+
+    # -------------------------
+    # Numerical insights
+    # -------------------------
+
+    for column, data in numerical_results.items():
+
+        skewness = data["skewness"]
+
+        if skewness > 1:
+            insights.append(
+                f"{column} is strongly right-skewed."
+            )
+
+        elif skewness < -1:
+            insights.append(
+                f"{column} is strongly left-skewed."
+            )
+
+        elif abs(skewness) < 0.5:
+            insights.append(
+                f"{column} has a relatively symmetric distribution."
+            )
+
+    # -------------------------
+    # Categorical insights
+    # -------------------------
+
+    for column, data in categorical_results.items():
+
+        percentages = data["percentages"]
+
+        if percentages:
+
+            largest_percentage = max(
+                percentages.values()
+            )
+
+            if largest_percentage >= 80:
+                insights.append(
+                    f"{column} is dominated by one category "
+                    f"({largest_percentage}% of the data)."
+                )
+
+    # -------------------------
+    # Target insights
+    # -------------------------
+
+    if target_results:
+
+        problem_type = target_results.get(
+            "problem_type"
+        )
+
+        if problem_type == "classification":
+
+            percentages = target_results.get(
+                "percentages",
+                {}
+            )
+
+            if percentages:
+
+                largest_class = max(
+                    percentages.values()
+                )
+
+                if largest_class >= 70:
+                    insights.append(
+                        "The target variable appears "
+                        "to have class imbalance."
+                    )
+
+        elif problem_type == "regression":
+
+            insights.append(
+                "The dataset contains a continuous "
+                "target suitable for regression analysis."
+            )
+
+    # -------------------------
+    # Correlation insights
+    # -------------------------
+
+    strong_correlations = correlation_results.get(
+        "strong_correlations",
+        []
+    )
+
+    for correlation in strong_correlations:
+
+        column_1 = correlation["column_1"]
+        column_2 = correlation["column_2"]
+        value = correlation["correlation"]
+
+        direction = (
+            "positive"
+            if value > 0
+            else "negative"
+        )
+
+        insights.append(
+            f"{column_1} and {column_2} have a "
+            f"strong {direction} correlation "
+            f"({value})."
+        )
+
+    # -------------------------
+    # Outlier insights
+    # -------------------------
+
+    for column, data in outlier_results.items():
+
+        percentage = data["outlier_percentage"]
+
+        if percentage >= 5:
+
+            insights.append(
+                f"{column} contains a relatively high "
+                f"percentage of potential outliers "
+                f"({percentage}%)."
+            )
+
+    return insights
