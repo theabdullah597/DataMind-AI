@@ -5,7 +5,7 @@ def inspect_dataset(file_path: str) -> dict:
 
 
     if file_path.endswith(".csv"):
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, sep=None, engine='python', encoding_errors='replace')
 
     elif file_path.endswith(".xlsx"):
         df = pd.read_excel(file_path)

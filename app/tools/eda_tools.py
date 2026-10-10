@@ -1,5 +1,4 @@
 import pandas as pd
-from pandas import value_counts
 
 
 def analyze_numerical_columns(df:pd.DataFrame)->dict:
@@ -63,14 +62,23 @@ def analyze_categorical_columns(df: pd.DataFrame) -> dict:
 
     return results
 
-def analyze_target_column(df:pd.DataFrame,target_column:str)->dict:
+def analyze_target_column(df:pd.DataFrame, target_column:str, task_type:str="auto")->dict:
     if target_column not in df.columns:
         raise ValueError(
             f"Target column {target_column} is not present in the dataset"
         )
     series=df[target_column].dropna()
     unique_values=series.nunique()
-    if (series.dtype=='object' or str(series.dtype)=="category" or unique_values<=10):
+    
+    is_classification = False
+    if task_type == "classification":
+        is_classification = True
+    elif task_type == "regression":
+        is_classification = False
+    else:
+        is_classification = (series.dtype=='object' or str(series.dtype)=="category" or unique_values<=10)
+        
+    if is_classification:
         problem_type="classification"
         value_counts=series.value_counts()
         distribution={

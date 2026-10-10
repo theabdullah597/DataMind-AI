@@ -50,7 +50,7 @@
 import pandas as pd
 from pathlib import Path
 
-from tools.ml_tools import validate_target_column
+from app.tools.ml_tools import validate_target_column
 
 # Get the project root directory
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -74,7 +74,7 @@ result = validate_target_column(df, target_column)
 print("Target Validation Results:")
 print(result)
 
-from tools.ml_tools import prepare_ml_data
+from app.tools.ml_tools import prepare_ml_data
 prepared = prepare_ml_data(df, target_column)
 
 print("\nPreprocessing Results:")
