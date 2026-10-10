@@ -19,7 +19,7 @@ llm_with_tools = None
 def get_llm():
     global llm_with_tools
     if llm_with_tools is None:
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-8b", temperature=0)
+        llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0)
         llm_with_tools = llm.bind_tools(tools)
     return llm_with_tools
 
