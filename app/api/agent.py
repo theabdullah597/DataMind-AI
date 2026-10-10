@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict
@@ -20,7 +21,7 @@ class ChatRequest(BaseModel):
 async def chat_with_agent(request: ChatRequest):
     try:
         messages_dict = [{"role": msg.role, "content": msg.content} for msg in request.messages]
-        response_text = process_chat(messages_dict, request.dataset_id)
+        response_text = await asyncio.to_thread(process_chat, messages_dict, request.dataset_id)
         return {"response": response_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
