@@ -1,5 +1,23 @@
-
+import numpy as np
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor, RandomForestClassifier, RandomForestRegressor
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    r2_score,
+    recall_score,
+    roc_auc_score,
+)
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 def validate_target_column(
@@ -10,7 +28,6 @@ def validate_target_column(
     """
     Validate the target column before ML training.
     """
-
     if df.empty:
         raise ValueError("The dataset is empty.")
 
@@ -20,7 +37,6 @@ def validate_target_column(
         )
 
     target = df[target_column]
-
     missing_count = int(target.isna().sum())
     unique_count = int(target.nunique())
 
@@ -37,7 +53,7 @@ def validate_target_column(
 
     if task_type not in ["auto", "classification", "regression"]:
         raise ValueError("task_type must be one of 'auto', 'classification', 'regression'.")
-        
+
     if task_type == "regression" and not pd.api.types.is_numeric_dtype(target):
         raise ValueError("Regression requires a numerical target column.")
 
@@ -51,19 +67,6 @@ def validate_target_column(
     }
 
 
-
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, RandomForestClassifier, ExtraTreesClassifier
-import numpy as np
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-
-
 def prepare_ml_data(
     df: pd.DataFrame,
     target_column: str,
@@ -72,10 +75,8 @@ def prepare_ml_data(
     random_state: int = 42
 ) -> dict:
     """
-    Validate, split, and preprocess a dataset
-    for supervised machine learning.
+    Validate, split, and preprocess a dataset for supervised machine learning.
     """
-    
     if not (0 < test_size < 1):
         raise ValueError("test_size must be strictly between 0 and 1.")
 
@@ -91,10 +92,26 @@ def prepare_ml_data(
     if X.shape[1] == 0:
         raise ValueError("The dataset has no feature columns.")
 
+    # Drop all-NaN features
+    all_nan = [col for col in X.columns if X[col].isna().all()]
+    if all_nan:
+        X = X.drop(columns=all_nan)
+
     # Drop constant features
     constant_features = [col for col in X.columns if X[col].nunique(dropna=False) <= 1]
     if constant_features:
         X = X.drop(columns=constant_features)
+
+    # Convert datetime columns into numerical components (year, month, day)
+    datetime_columns = X.select_dtypes(include=["datetime", "datetimetz"]).columns.tolist()
+    for col in datetime_columns:
+        try:
+            X[f"{col}_year"] = X[col].dt.year
+            X[f"{col}_month"] = X[col].dt.month
+            X[f"{col}_day"] = X[col].dt.day
+        except Exception:
+            pass
+        X = X.drop(columns=[col])
 
     # Identify numerical and categorical features.
     numerical_columns = (
@@ -107,25 +124,18 @@ def prepare_ml_data(
             include=["object", "category", "bool"]
         ).columns.tolist()
     )
-    
-    # Drop high-cardinality categorical features
+
+    # Convert any remaining columns to string category
+    remaining_cols = [c for c in X.columns if c not in numerical_columns and c not in categorical_columns]
+    for c in remaining_cols:
+        X[c] = X[c].astype(str)
+        categorical_columns.append(c)
+
+    # Drop high-cardinality categorical features (> 100 distinct values, likely IDs or unique strings)
     high_cardinality = [col for col in categorical_columns if X[col].nunique() > 100]
     if high_cardinality:
         X = X.drop(columns=high_cardinality)
         categorical_columns = [col for col in categorical_columns if col not in high_cardinality]
-
-    unsupported_columns = [
-        col for col in X.columns
-        if col not in numerical_columns
-        and col not in categorical_columns
-    ]
-
-    if unsupported_columns:
-        raise ValueError(
-            "Unsupported feature types detected: "
-            f"{unsupported_columns}. "
-            "Convert or remove these columns first."
-        )
 
     # Create preprocessing pipelines.
     numerical_pipeline = Pipeline([
@@ -139,7 +149,6 @@ def prepare_ml_data(
     ])
 
     transformers = []
-
     if numerical_columns:
         transformers.append((
             "numerical",
@@ -159,7 +168,6 @@ def prepare_ml_data(
     )
 
     # Determine if task is classification
-    is_classification = False
     if task_type == "classification":
         is_classification = True
     elif task_type == "regression":
@@ -169,11 +177,8 @@ def prepare_ml_data(
         is_classification = (not pd.api.types.is_numeric_dtype(y) or unique_count <= 10)
 
     stratify = None
-
     if is_classification:
         class_counts = y.value_counts()
-        
-        # Ensure stratify is only set if all classes have at least 2 samples
         if len(class_counts) >= 2 and class_counts.min() >= 2:
             stratify = y
 
@@ -187,7 +192,6 @@ def prepare_ml_data(
 
     # Fit preprocessing ONLY on training features.
     X_train_processed = preprocessor.fit_transform(X_train)
-
     # Apply the already-fitted preprocessing to test features.
     X_test_processed = preprocessor.transform(X_test)
 
@@ -204,40 +208,134 @@ def prepare_ml_data(
     }
 
 
+def diagnose_regression_fit(train_r2: float, test_r2: float, train_rmse: float, test_rmse: float) -> dict:
+    """
+    Automated diagnostic engine to detect overfitting, underfitting, or good fit for regression models.
+    """
+    gap = train_r2 - test_r2
+
+    if train_r2 < 0.35 and test_r2 < 0.35:
+        status = "Underfitting"
+        badge = "Underfitting (High Bias)"
+        severity = "High"
+        summary = "Model is too simple and failed to capture relationships in this data."
+        detail = (
+            f"Both Training R² ({round(train_r2, 2)}) and Test R² ({round(test_r2, 2)}) are low. "
+            f"The model cannot capture the patterns in this dataset."
+        )
+        action = "Try nonlinear algorithms (Random Forest, Extra Trees), create new interaction features, or collect more informative variables."
+    elif gap > 0.15:
+        status = "Overfitting"
+        badge = "Overfitting (High Variance)"
+        severity = "High" if gap > 0.30 else "Moderate"
+        summary = "Model memorized training noise and performs significantly worse on new test data."
+        detail = (
+            f"Training R² is high ({round(train_r2, 2)}), but Test R² drops sharply to ({round(test_r2, 2)}), "
+            f"revealing a {round(gap * 100, 1)}% generalization gap."
+        )
+        action = "Reduce model complexity (e.g. limit max tree depth, increase min samples per leaf), introduce regularization, or gather more training data."
+    else:
+        status = "Good Fit"
+        badge = "Good Fit (Balanced)"
+        severity = "Optimal"
+        summary = "Model generalizes well to unseen data without memorizing training noise."
+        detail = (
+            f"Training R² ({round(train_r2, 2)}) and Test R² ({round(test_r2, 2)}) are tightly aligned "
+            f"with a minimal gap of only {round(abs(gap) * 100, 1)}%."
+        )
+        action = "This model is well-balanced and safe to deploy for batch inference."
+
+    return {
+        "status": status,
+        "badge": badge,
+        "severity": severity,
+        "generalization_gap": round(float(gap), 4),
+        "train_score": round(float(train_r2), 4),
+        "test_score": round(float(test_r2), 4),
+        "metric_name": "R² Score",
+        "summary": summary,
+        "detail": detail,
+        "action": action
+    }
+
+
+def diagnose_classification_fit(train_acc: float, test_acc: float, train_f1: float, test_f1: float) -> dict:
+    """
+    Automated diagnostic engine to detect overfitting, underfitting, or good fit for classification models.
+    """
+    gap = train_acc - test_acc
+
+    if train_acc < 0.60 and test_acc < 0.60:
+        status = "Underfitting"
+        badge = "Underfitting (High Bias)"
+        severity = "High"
+        summary = "Model is too simple and struggles to classify both training and test samples."
+        detail = (
+            f"Training Accuracy ({round(train_acc * 100, 1)}%) and Test Accuracy ({round(test_acc * 100, 1)}%) "
+            f"are both low. The model cannot separate the classes effectively."
+        )
+        action = "Switch to more expressive algorithms, check feature correlations, or engineer informative features."
+    elif gap > 0.12:
+        status = "Overfitting"
+        badge = "Overfitting (High Variance)"
+        severity = "High" if gap > 0.25 else "Moderate"
+        summary = "Model memorized training examples and struggles on unseen records."
+        detail = (
+            f"Training Accuracy is {round(train_acc * 100, 1)}%, but Test Accuracy falls to {round(test_acc * 100, 1)}%, "
+            f"leaving a notable {round(gap * 100, 1)}% generalization gap."
+        )
+        action = "Prune tree depth, increase regularization (higher C for Logistic Regression), or use cross-validation to select simpler parameters."
+    else:
+        status = "Good Fit"
+        badge = "Good Fit (Balanced)"
+        severity = "Optimal"
+        summary = "Model generalizes reliably to new unseen test examples."
+        detail = (
+            f"Training Accuracy ({round(train_acc * 100, 1)}%) and Test Accuracy ({round(test_acc * 100, 1)}%) "
+            f"are close (gap: {round(abs(gap) * 100, 1)}%)."
+        )
+        action = "This model is well-calibrated and recommended for batch predictions."
+
+    return {
+        "status": status,
+        "badge": badge,
+        "severity": severity,
+        "generalization_gap": round(float(gap), 4),
+        "train_score": round(float(train_acc), 4),
+        "test_score": round(float(test_acc), 4),
+        "metric_name": "Accuracy",
+        "summary": summary,
+        "detail": detail,
+        "action": action
+    }
+
 
 def train_regression_models(prepared: dict, primary_metric: str = "rmse") -> dict:
     """
-    Train and compare several regression models.
+    Train and compare several regression models with both training and testing evaluations,
+    cross-validation, and automated overfitting/underfitting diagnostics.
     """
-
     X_train = prepared["X_train"]
     X_test = prepared["X_test"]
     y_train = prepared["y_train"]
     y_test = prepared["y_test"]
 
-    # Regression requires numerical target values.
     if not (
         np.issubdtype(y_train.dtype, np.number)
         and np.issubdtype(y_test.dtype, np.number)
     ):
-        raise ValueError(
-            "Regression requires a numerical target column."
-        )
+        raise ValueError("Regression requires a numerical target column.")
 
     if y_train.nunique() < 2:
-        raise ValueError(
-            "Training data must contain at least two distinct target values."
-        )
+        raise ValueError("Training data must contain at least two distinct target values.")
 
     models = {
         "Linear Regression": LinearRegression(),
-
         "Random Forest Regressor": RandomForestRegressor(
             n_estimators=100,
             random_state=42,
             n_jobs=-1
         ),
-
         "Extra Trees Regressor": ExtraTreesRegressor(
             n_estimators=100,
             random_state=42,
@@ -251,26 +349,47 @@ def train_regression_models(prepared: dict, primary_metric: str = "rmse") -> dic
     for name, model in models.items():
         model.fit(X_train, y_train)
 
-        predictions = model.predict(X_test)
+        # Train metrics (for overfitting detection)
+        train_predictions = model.predict(X_train)
+        train_mae = mean_absolute_error(y_train, train_predictions)
+        train_mse = mean_squared_error(y_train, train_predictions)
+        train_rmse = np.sqrt(train_mse)
+        train_r2 = r2_score(y_train, train_predictions)
 
-        mae = mean_absolute_error(y_test, predictions)
-        mse = mean_squared_error(y_test, predictions)
+        # Test metrics
+        test_predictions = model.predict(X_test)
+        mae = mean_absolute_error(y_test, test_predictions)
+        mse = mean_squared_error(y_test, test_predictions)
         rmse = np.sqrt(mse)
-        r2 = r2_score(y_test, predictions)
-        
+        r2 = r2_score(y_test, test_predictions)
+
+        # Cross-validation on training data
+        cv_folds = min(5, max(2, len(y_train) // 10))
+        cv_mean = None
+        cv_std = None
+        try:
+            cv_scores = cross_val_score(model, X_train, y_train, cv=cv_folds, scoring='r2')
+            cv_mean = round(float(np.mean(cv_scores)), 4)
+            cv_std = round(float(np.std(cv_scores)), 4)
+        except Exception:
+            pass
+
+        # Fit diagnosis (overfitting / underfitting)
+        fit_diagnosis = diagnose_regression_fit(train_r2, r2, train_rmse, rmse)
+
         # Sample points for scatter plot visualization
         max_points = 200
         n_points = len(y_test)
         indices = np.random.choice(n_points, min(max_points, n_points), replace=False)
         y_test_array = np.array(y_test)
-        
+
         plot_data = []
         for idx in indices:
             actual = float(y_test_array[idx])
-            pred = float(predictions[idx])
+            pred = float(test_predictions[idx])
             plot_data.append({
-                "actual": round(actual, 4), 
-                "predicted": round(pred, 4), 
+                "actual": round(actual, 4),
+                "predicted": round(pred, 4),
                 "residual": round(actual - pred, 4)
             })
 
@@ -279,6 +398,14 @@ def train_regression_models(prepared: dict, primary_metric: str = "rmse") -> dic
             "mse": round(float(mse), 4),
             "rmse": round(float(rmse), 4),
             "r2_score": round(float(r2), 4),
+            "train_r2": round(float(train_r2), 4),
+            "train_rmse": round(float(train_rmse), 4),
+            "train_mae": round(float(train_mae), 4),
+            "test_r2": round(float(r2), 4),
+            "test_rmse": round(float(rmse), 4),
+            "cv_r2_mean": cv_mean,
+            "cv_r2_std": cv_std,
+            "fit_diagnosis": fit_diagnosis,
             "plot_data": plot_data
         }
 
@@ -286,7 +413,7 @@ def train_regression_models(prepared: dict, primary_metric: str = "rmse") -> dic
 
     best_model_name = None
     best_score = float('inf') if primary_metric in ["mae", "mse", "rmse"] else float('-inf')
-    
+
     for name, res in results.items():
         score = res.get(primary_metric, res["rmse"])
         if primary_metric in ["mae", "mse", "rmse"]:
@@ -297,10 +424,11 @@ def train_regression_models(prepared: dict, primary_metric: str = "rmse") -> dic
             if score > best_score:
                 best_score = score
                 best_model_name = name
-                
+
+    best_diag = results[best_model_name]["fit_diagnosis"]
     recommendation = {
         "model": best_model_name,
-        "reason": f"Selected based on best {primary_metric} score of {best_score}"
+        "reason": f"Selected based on best test {primary_metric} score of {best_score} ({best_diag['badge']})"
     }
 
     return {
@@ -312,9 +440,9 @@ def train_regression_models(prepared: dict, primary_metric: str = "rmse") -> dic
 
 def train_classification_models(prepared: dict, primary_metric: str = "accuracy") -> dict:
     """
-    Train and compare several classification models.
+    Train and compare several classification models with both training and testing evaluations,
+    cross-validation, and automated overfitting/underfitting diagnostics.
     """
-
     X_train = prepared["X_train"]
     X_test = prepared["X_test"]
     y_train = prepared["y_train"]
@@ -341,22 +469,40 @@ def train_classification_models(prepared: dict, primary_metric: str = "accuracy"
 
     results = {}
     trained_models = {}
-    
-    # Determine averaging method for metrics
     avg_method = 'weighted'
 
     for name, model in models.items():
         model.fit(X_train, y_train)
 
-        predictions = model.predict(X_test)
+        # Train metrics (for overfitting detection)
+        train_predictions = model.predict(X_train)
+        train_acc = accuracy_score(y_train, train_predictions)
+        train_f1 = f1_score(y_train, train_predictions, average=avg_method, zero_division=0)
 
-        acc = accuracy_score(y_test, predictions)
-        prec = precision_score(y_test, predictions, average=avg_method, zero_division=0)
-        rec = recall_score(y_test, predictions, average=avg_method, zero_division=0)
-        f1 = f1_score(y_test, predictions, average=avg_method, zero_division=0)
+        # Test metrics
+        test_predictions = model.predict(X_test)
+        acc = accuracy_score(y_test, test_predictions)
+        prec = precision_score(y_test, test_predictions, average=avg_method, zero_division=0)
+        rec = recall_score(y_test, test_predictions, average=avg_method, zero_division=0)
+        f1 = f1_score(y_test, test_predictions, average=avg_method, zero_division=0)
+        cm = confusion_matrix(y_test, test_predictions)
 
-        cm = confusion_matrix(y_test, predictions)
-        
+        # Cross-validation
+        min_class_samples = int(y_train.value_counts().min())
+        cv_folds = max(2, min(5, min_class_samples))
+        cv_mean = None
+        cv_std = None
+        if min_class_samples >= 2:
+            try:
+                cv_scores = cross_val_score(model, X_train, y_train, cv=cv_folds, scoring='accuracy')
+                cv_mean = round(float(np.mean(cv_scores)), 4)
+                cv_std = round(float(np.std(cv_scores)), 4)
+            except Exception:
+                pass
+
+        # Fit diagnosis (overfitting / underfitting)
+        fit_diagnosis = diagnose_classification_fit(train_acc, acc, train_f1, f1)
+
         roc_auc = None
         if hasattr(model, "predict_proba"):
             try:
@@ -373,9 +519,15 @@ def train_classification_models(prepared: dict, primary_metric: str = "accuracy"
             "precision": round(float(prec), 4),
             "recall": round(float(rec), 4),
             "f1_score": round(float(f1), 4),
+            "train_accuracy": round(float(train_acc), 4),
+            "train_f1": round(float(train_f1), 4),
+            "test_accuracy": round(float(acc), 4),
+            "cv_accuracy_mean": cv_mean,
+            "cv_accuracy_std": cv_std,
+            "fit_diagnosis": fit_diagnosis,
             "confusion_matrix": cm.tolist()
         }
-        
+
         if roc_auc is not None:
             results[name]["roc_auc"] = round(float(roc_auc), 4)
 
@@ -383,16 +535,17 @@ def train_classification_models(prepared: dict, primary_metric: str = "accuracy"
 
     best_model_name = None
     best_score = float('-inf')
-    
+
     for name, res in results.items():
         score = res.get(primary_metric, res["accuracy"])
         if score > best_score:
             best_score = score
             best_model_name = name
 
+    best_diag = results[best_model_name]["fit_diagnosis"]
     recommendation = {
         "model": best_model_name,
-        "reason": f"Selected based on best {primary_metric} score of {best_score}"
+        "reason": f"Selected based on best test {primary_metric} score of {best_score} ({best_diag['badge']})"
     }
 
     return {

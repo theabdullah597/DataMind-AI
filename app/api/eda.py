@@ -18,6 +18,7 @@ router = APIRouter(
 UPLOAD_DIR = "uploads"
 
 @router.post("")
+@router.post("/")
 async def generate_eda(dataset_id: str, target_column: str = Query(None)):
     file_path = os.path.join(UPLOAD_DIR, dataset_id)
     if not os.path.exists(file_path):
