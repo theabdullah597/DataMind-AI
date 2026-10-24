@@ -38,6 +38,8 @@ import {
   Compass
 } from 'lucide-react';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 // ==========================================
 // 1. ISOLATED CHAT AGENT (Prevents re-renders of the main page)
 // ==========================================
@@ -59,7 +61,7 @@ const ChatAgentWidget = memo(function ChatAgentWidget({ datasetId }) {
     setIsChatting(true);
 
     try {
-      const response = await fetch('http://localhost:8000/agent/chat', {
+      const response = await fetch(`${API_BASE}/agent/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages, dataset_id: datasetId })
@@ -297,7 +299,7 @@ export default function Home() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:8000/datasets/upload', {
+      const response = await fetch(`${API_BASE}/datasets/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -350,7 +352,7 @@ export default function Home() {
     setError('');
     try {
       const targetQuery = selectedTarget ? `?target_column=${encodeURIComponent(selectedTarget)}` : '';
-      const response = await fetch(`http://localhost:8000/datasets/${datasetId}/eda${targetQuery}`, {
+      const response = await fetch(`${API_BASE}/datasets/${datasetId}/eda${targetQuery}`, {
         method: 'POST'
       });
       if (!response.ok) {
@@ -371,7 +373,7 @@ export default function Home() {
     setLoadingTask('ml');
     setError('');
     try {
-      const response = await fetch(`http://localhost:8000/datasets/${datasetId}/ml/train`, {
+      const response = await fetch(`${API_BASE}/datasets/${datasetId}/ml/train`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_column: target, task_type: "auto" })
@@ -394,7 +396,7 @@ export default function Home() {
     setLoadingTask('explain');
     setError('');
     try {
-      const response = await fetch(`http://localhost:8000/models/${mlResults.model_id}/explain`);
+      const response = await fetch(`${API_BASE}/models/${mlResults.model_id}/explain`);
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.detail || 'Explain failed');
@@ -418,7 +420,7 @@ export default function Home() {
     const formData = new FormData();
     formData.append('file', predictFile);
     try {
-      const response = await fetch(`http://localhost:8000/models/${mlResults.model_id}/predict/batch`, {
+      const response = await fetch(`${API_BASE}/models/${mlResults.model_id}/predict/batch`, {
         method: 'POST',
         body: formData
       });
@@ -438,15 +440,15 @@ export default function Home() {
 
   const handleDownloadTemplate = () => {
     if (!mlResults || !mlResults.model_id) return;
-    window.open(`http://localhost:8000/models/${mlResults.model_id}/template`, '_blank');
+    window.open(`${API_BASE}/models/${mlResults.model_id}/template`, '_blank');
   };
 
   const handleDownloadDataset = () => {
-    window.open(`http://localhost:8000/datasets/${datasetId}/download`, '_blank');
+    window.open(`${API_BASE}/datasets/${datasetId}/download`, '_blank');
   };
 
   const handleDownloadModel = () => {
-    window.open(`http://localhost:8000/models/${mlResults.model_id}/download`, '_blank');
+    window.open(`${API_BASE}/models/${mlResults.model_id}/download`, '_blank');
   };
 
   const handleDownloadPredictions = () => {
@@ -602,7 +604,7 @@ export default function Home() {
             <BookOpen size={16} color="var(--primary)" /> Documentation & Guide
           </button>
           <a
-            href="http://localhost:8000/docs"
+            href={`${API_BASE}/docs`}
             target="_blank"
             rel="noreferrer"
             className="btn btn-secondary"
@@ -1807,13 +1809,13 @@ export default function Home() {
 
                   <div style={{ marginBottom: '1.5rem' }}>
                     <a
-                      href="http://localhost:8000/docs"
+                      href={`${API_BASE}/docs`}
                       target="_blank"
                       rel="noreferrer"
                       className="btn btn-primary"
                       style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none', fontSize: '0.9rem' }}
                     >
-                      <ExternalLink size={16} /> Open Interactive Swagger UI (http://localhost:8000/docs)
+                      <ExternalLink size={16} /> Open Interactive Swagger UI ({API_BASE}/docs)
                     </a>
                   </div>
 

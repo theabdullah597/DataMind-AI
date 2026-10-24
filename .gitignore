@@ -1,0 +1,43 @@
+# Environments & Secrets
+.env
+.env*.local
+*.env
+venv/
+.venv/
+env/
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js & Next.js
+node_modules/
+frontend/node_modules/
+frontend/.next/
+.next/
+frontend/out/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Uploaded Datasets & Trained Models (keep directory structure)
+uploads/*
+!uploads/.gitkeep
+models/*
+!models/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# IDE & OS Metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
