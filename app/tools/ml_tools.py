@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
+from scipy.sparse import issparse
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor, RandomForestClassifier, RandomForestRegressor
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
@@ -54,8 +56,28 @@ def validate_target_column(
     if task_type not in ["auto", "classification", "regression"]:
         raise ValueError("task_type must be one of 'auto', 'classification', 'regression'.")
 
-    if task_type == "regression" and not pd.api.types.is_numeric_dtype(target):
+    is_numeric = pd.api.types.is_numeric_dtype(target)
+
+    if task_type == "regression" and not is_numeric:
         raise ValueError("Regression requires a numerical target column.")
+
+    # Guard: Detect high-cardinality non-numeric targets (e.g., Description, Title, ID fields)
+    is_classification_task = (
+        task_type == "classification" or
+        (task_type == "auto" and (not is_numeric or unique_count <= 10))
+    )
+    if is_classification_task and not is_numeric and unique_count > 50:
+        candidates = [
+            c for c in df.columns
+            if c != target_column and (df[c].nunique() <= 30 or (pd.api.types.is_numeric_dtype(df[c]) and df[c].nunique() >= 2))
+        ]
+        suggestion = f" (Suggested candidate target columns: {', '.join(candidates[:3])})" if candidates else ""
+        raise ValueError(
+            f"Target column '{target_column}' has {unique_count} distinct text values. "
+            f"This looks like an ID, description, or free-text column, not a classification target. "
+            f"Supervised classification requires a target with categories (typically <= 50 distinct classes). "
+            f"Please select a valid categorical target column.{suggestion}"
+        )
 
     return {
         "target_column": target_column,
@@ -75,7 +97,8 @@ def prepare_ml_data(
     random_state: int = 42
 ) -> dict:
     """
-    Validate, split, and preprocess a dataset for supervised machine learning.
+    Validate, split, and preprocess a dataset for supervised machine learning,
+    with automatic TF-IDF extraction for natural text columns.
     """
     if not (0 < test_size < 1):
         raise ValueError("test_size must be strictly between 0 and 1.")
@@ -121,7 +144,7 @@ def prepare_ml_data(
 
     categorical_columns = (
         X.select_dtypes(
-            include=["object", "category", "bool"]
+            include=["object", "string", "category", "bool"]
         ).columns.tolist()
     )
 
@@ -131,25 +154,35 @@ def prepare_ml_data(
         X[c] = X[c].astype(str)
         categorical_columns.append(c)
 
-    # Drop high-cardinality categorical features (> 100 distinct values, likely IDs or unique strings)
-    high_cardinality = [col for col in categorical_columns if X[col].nunique() > 100]
-    if high_cardinality:
-        X = X.drop(columns=high_cardinality)
-        categorical_columns = [col for col in categorical_columns if col not in high_cardinality]
+    # Separate high-cardinality text columns from discrete categories and IDs
+    text_columns = []
+    discrete_categorical = []
+
+    for col in categorical_columns:
+        X[col] = X[col].fillna("").astype(str)
+        n_unique = int(X[col].nunique())
+        avg_len = float(X[col].str.len().mean())
+        has_spaces = float((X[col].str.count(" ") >= 1).mean()) > 0.3
+
+        if n_unique > 50 and (avg_len > 10 or has_spaces):
+            # Rich text field (e.g., Title, Description, Review, Body)
+            text_columns.append(col)
+        elif n_unique > 100:
+            # High cardinality ID or hash without sentence structure (e.g. UUID, customer_id)
+            X = X.drop(columns=[col])
+        else:
+            discrete_categorical.append(col)
+
+    categorical_columns = discrete_categorical
 
     # Create preprocessing pipelines.
-    numerical_pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler())
-    ])
-
-    categorical_pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("encoder", OneHotEncoder(handle_unknown="ignore"))
-    ])
-
     transformers = []
+
     if numerical_columns:
+        numerical_pipeline = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler())
+        ])
         transformers.append((
             "numerical",
             numerical_pipeline,
@@ -157,11 +190,26 @@ def prepare_ml_data(
         ))
 
     if categorical_columns:
+        categorical_pipeline = Pipeline([
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("encoder", OneHotEncoder(handle_unknown="ignore"))
+        ])
         transformers.append((
             "categorical",
             categorical_pipeline,
             categorical_columns
         ))
+
+    # Process text columns with TF-IDF Vectorizer
+    for tcol in text_columns:
+        transformers.append((
+            f"text_{tcol}",
+            TfidfVectorizer(max_features=50, stop_words="english"),
+            tcol
+        ))
+
+    if not transformers:
+        raise ValueError("The dataset has no valid feature columns left after preprocessing.")
 
     preprocessor = ColumnTransformer(
         transformers=transformers
@@ -195,6 +243,18 @@ def prepare_ml_data(
     # Apply the already-fitted preprocessing to test features.
     X_test_processed = preprocessor.transform(X_test)
 
+    # Convert sparse matrices to dense arrays for fast, universal model compatibility
+    if issparse(X_train_processed):
+        X_train_processed = X_train_processed.toarray()
+    if issparse(X_test_processed):
+        X_test_processed = X_test_processed.toarray()
+
+    # Extract feature names for explainability
+    try:
+        feature_names = preprocessor.get_feature_names_out().tolist()
+    except Exception:
+        feature_names = numerical_columns + categorical_columns + text_columns
+
     return {
         "X_train": X_train_processed,
         "X_test": X_test_processed,
@@ -203,6 +263,8 @@ def prepare_ml_data(
         "preprocessor": preprocessor,
         "numerical_columns": numerical_columns,
         "categorical_columns": categorical_columns,
+        "text_columns": text_columns,
+        "feature_names": feature_names,
         "train_rows": len(X_train),
         "test_rows": len(X_test)
     }
@@ -265,7 +327,17 @@ def diagnose_classification_fit(train_acc: float, test_acc: float, train_f1: flo
     """
     gap = train_acc - test_acc
 
-    if train_acc < 0.60 and test_acc < 0.60:
+    if train_acc < 0.10 and test_acc < 0.10:
+        status = "Underfitting"
+        badge = "Invalid Target / Text Column"
+        severity = "Critical"
+        summary = "Accuracy is near 0%. The selected target column contains unique text or IDs rather than discrete categories."
+        detail = (
+            f"Training Accuracy ({round(train_acc * 100, 1)}%) and Test Accuracy ({round(test_acc * 100, 1)}%) "
+            f"are near zero. Standard classification algorithms cannot learn when almost every row has a unique text label."
+        )
+        action = "Select a discrete categorical target column (e.g. 'Class Index', 'Category', 'Status') with <= 50 distinct classes."
+    elif train_acc < 0.60 and test_acc < 0.60:
         status = "Underfitting"
         badge = "Underfitting (High Bias)"
         severity = "High"

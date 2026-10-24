@@ -310,10 +310,33 @@ export default function Home() {
       const data = await response.json();
       setProfile(data.profile);
       setDatasetId(data.saved_filename);
-      // Default selected target to the last column
+      // Intelligently pick the best target column
       if (data.profile?.dataset?.column_names?.length) {
         const cols = data.profile.dataset.column_names;
-        setSelectedTarget(cols[cols.length - 1]);
+        const uVals = data.profile.unique_values || {};
+        const dTypes = data.profile.data_types || {};
+
+        let bestCol = '';
+        // 1. Check for common target keywords
+        const kwList = ['target', 'label', 'class', 'churn', 'status', 'outcome', 'category', 'survived', 'price', 'default'];
+        for (const kw of kwList) {
+          const match = cols.find(c => c.toLowerCase().includes(kw));
+          if (match && (uVals[match] === undefined || uVals[match] <= 50 || dTypes[match] !== 'object')) {
+            bestCol = match;
+            break;
+          }
+        }
+        // 2. Check for low-cardinality discrete category (2 to 20 classes)
+        if (!bestCol) {
+          const discrete = cols.find(c => uVals[c] !== undefined && uVals[c] >= 2 && uVals[c] <= 20);
+          if (discrete) bestCol = discrete;
+        }
+        // 3. Check for numeric column
+        if (!bestCol) {
+          const numCol = cols.find(c => dTypes[c] && ['int', 'float', 'number'].some(t => String(dTypes[c]).includes(t)));
+          if (numCol) bestCol = numCol;
+        }
+        setSelectedTarget(bestCol || cols[0]);
       }
     } catch (err) {
       setError(err.message);
@@ -689,9 +712,16 @@ export default function Home() {
                     onChange={(e) => setSelectedTarget(e.target.value)}
                     style={{ background: 'var(--bg-color)', color: 'white', border: '1px solid var(--border-color)', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.9rem', outline: 'none' }}
                   >
-                    {profile.dataset.column_names.map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
+                    {profile.dataset.column_names.map(c => {
+                      const uCount = profile.unique_values?.[c];
+                      const dType = profile.data_types?.[c];
+                      const isTextCol = uCount > 50 && dType === 'object';
+                      return (
+                        <option key={c} value={c}>
+                          {c} {uCount !== undefined ? `(${uCount} unique${isTextCol ? ' - Text/ID' : ''})` : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}
@@ -730,6 +760,30 @@ export default function Home() {
                 </>
               )}
             </div>
+
+            {/* Warning if user selects a high-cardinality text/ID column as target */}
+            {profile.unique_values?.[selectedTarget] > 50 && profile.data_types?.[selectedTarget] === 'object' && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                color: '#fca5a5',
+                padding: '0.85rem 1.25rem',
+                borderRadius: '10px',
+                marginBottom: '1.75rem',
+                fontSize: '0.875rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                lineHeight: '1.5'
+              }}>
+                <AlertTriangle size={20} color="#f87171" style={{ flexShrink: 0 }} />
+                <div>
+                  <strong>Invalid Target Column Warning:</strong> &quot;{selectedTarget}&quot; has {profile.unique_values[selectedTarget]} unique text descriptions/strings.
+                  Classification algorithms require discrete categories with multiple examples per class (e.g. <code>Class Index</code> with 4 classes).
+                  Training on raw text sentences results in 0% accuracy. Please select a category column like <strong>Class Index</strong>.
+                </div>
+              </div>
+            )}
 
             {error && <div className="error-message">{error}</div>}
 

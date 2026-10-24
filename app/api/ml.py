@@ -79,7 +79,7 @@ async def train_models(dataset_id: str, request: TrainRequest):
             "model": best_model,
             "preprocessor": prepared["preprocessor"],
             "metrics": models_output["results"][best_model_name],
-            "features": prepared["numerical_columns"] + prepared["categorical_columns"]
+            "features": prepared.get("feature_names", prepared["numerical_columns"] + prepared["categorical_columns"])
         }
         
         joblib.dump(artifact, model_path)
